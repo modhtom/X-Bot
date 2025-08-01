@@ -2,133 +2,116 @@ import os
 import time
 import requests
 import tweepy
-from Helpers import Data
-import Email as email
+import tempfile
+from functools import wraps
+from Helpers import Data, Email
 
-# from dotenv.main import load_dotenv
+error_handler = Email.ErrorHandler()
+
+
+def _handle_api_errors(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except tweepy.errors.TweepyException as e:
+            if e.api_codes and 433 in e.api_codes:
+                print("Skipping duplicate content.")
+                return
+            elif e.api_codes and 429 in e.api_codes:
+                print("Rate limit exceeded. Waiting for 15 minutes before retrying...")
+                time.sleep(15 * 60)
+                return func(self, *args, **kwargs)
+            else:
+                error_handler.handle_error(
+                    e, f"A Twitter API error occurred in {func.__name__}"
+                )
+        except Exception as e:
+            error_handler.handle_error(
+                e, f"An unexpected error occurred in {func.__name__}"
+            )
+
+    return wrapper
 
 
 class TwitterBot:
-    # def __init__(self):
-    #     load_dotenv()
-    #     self.client = tweepy.Client(
-    #         consumer_key=os.environ["CONSUMER_KEY"],
-    #         consumer_secret=os.environ["CONSUMER_SECRET"],
-    #         access_token=os.environ["ACCESS_TOKEN"],
-    #         access_token_secret=os.environ["ACCESS_SECRET"],
-    #     )
-    #     self.auth = tweepy.OAuth1UserHandler(
-    #         os.environ["CONSUMER_KEY"], os.environ["CONSUMER_SECRET"]
-    #     )
-    #     self.auth.set_access_token(
-    #         os.environ["ACCESS_TOKEN"], os.environ["ACCESS_SECRET"]
-    #     )
-    #     self.api = tweepy.API(self.auth)
-
     def __init__(self):
-        with open("/etc/secrets/CONSUMER_KEY", "r") as f:
-            consumer_key = f.read().strip()
-        with open("/etc/secrets/CONSUMER_SECRET", "r") as f:
-            consumer_secret = f.read().strip()
-        with open("/etc/secrets/ACCESS_TOKEN", "r") as f:
-            access_token = f.read().strip()
-        with open("/etc/secrets/ACCESS_SECRET", "r") as f:
-            access_secret = f.read().strip()
-
+        consumer_key = os.getenv("CONSUMER_KEY")
+        consumer_secret = os.getenv("CONSUMER_SECRET")
+        access_token = os.getenv("ACCESS_TOKEN")
+        access_secret = os.getenv("ACCESS_SECRET")
+        if not all([consumer_key, consumer_secret, access_token, access_secret]):
+            raise ValueError(
+                "Twitter API credentials are not fully configured in environment variables."
+            )
         self.client = tweepy.Client(
-            consumer_key=consumer_key,
-            consumer_secret=consumer_secret,
-            access_token=access_token,
-            access_token_secret=access_secret,
+            consumer_key, consumer_secret, access_token, access_secret
         )
-        self.auth = tweepy.OAuth1UserHandler(consumer_key, consumer_secret)
-        self.auth.set_access_token(access_token, access_secret)
-        self.api = tweepy.API(self.auth)
+        auth = tweepy.OAuth1UserHandler(
+            consumer_key, consumer_secret, access_token, access_secret
+        )
+        self.api = tweepy.API(auth)
+        self.dry_run = os.getenv("DRY_RUN", "False").lower() in ("true", "1")
 
-    def tweet(self, tweet_text):
-        now = time.localtime()
-        time_str = time.strftime("%Y-%m-%d %H:%M:%S", now)
-        try:
-            if len(tweet_text) <= 280:
-                # email.send(f"TWEET:{tweet_text}")
-                response = self.client.create_tweet(text=tweet_text)
-                # email.send(f"Tweeted: {response}")
-                msg = f"{response} at {time_str}"
-                # email.send(msg)
-                return response
-            else:
-                # email.send(f"TWEET Thread:{tweet_text}")
-                return self.tweet_thread(tweet_text)
+        if self.dry_run:
+            print("🟢 BOT IS IN DRY RUN MODE. NO TWEETS WILL BE SENT. 🟢")
 
-        except Exception as e:
-            error_msg = str(e)
-            if "Status is a duplicate" in error_msg:
-                # email.send("Skipping duplicate content...")
-                msg = f"Skipping duplicate content... at {time_str}"
-                email.send(msg)
-            elif "429 Too Many Requests" in error_msg:
-                email.send("Rate limit exceeded. Waiting for 5 hours...")
-                time.sleep(60 * 60 * 5)
-                self.tweet(self, tweet_text)
-            else:
-                email.send(f"Error occurred while tweeting: {error_msg}")
-                msg = f"{error_msg} at {time_str}"
-                email.send(msg)
-            return None
+        print("TwitterBot initialized successfully.")
 
-    def tweet_thread(self, tweet_text):
-        now = time.localtime()
-        time_str = time.strftime("%Y-%m-%d %H:%M:%S", now)
-        tweet_texts = Data.split_long_sentence(tweet_text)
-        response = None
-        try:
-            response = self.client.create_tweet(text=tweet_texts[0])
-            # email.send(f"Tweeted: {response}")
-            main_tweet_id = response.data["id"]
-            msg = f"{response} at {time_str}"
-            # email.send(msg)
-            for tweet in tweet_texts[1:]:
-                response = self.client.create_tweet(
-                    text=tweet, in_reply_to_tweet_id=main_tweet_id
-                )
-                # email.send(f"Tweeted: {response}")
-                main_tweet_id = response.data["id"]
-                msg = f"{response} at {time_str}"
-                email.send(msg)
-        except Exception as e:
-            error_msg = str(e)
-            if "Status is a duplicate" in error_msg:
-                email.send("Skipping duplicate content...")
-                msg = f"Skipping duplicate content... at {time_str}"
-                email.send(msg)
-            elif "429 Too Many Requests" in error_msg:
-                email.send("Rate limit exceeded. Waiting for 5 hours...")
-                time.sleep(60 * 60 * 5)
-                self.tweet_thread(tweet_text)
-            else:
-                email.send(f"Error occurred while tweeting: {error_msg}")
-                msg = f"{error_msg} at {time_str}"
-                email.send(msg)
-        return response
+    @_handle_api_errors
+    def tweet(self, tweet_text: str):
+        if self.dry_run:
+            print("--- 🌵 DRY RUN - TWEET 🌵 ---")
+            print(tweet_text)
+            print("------------------------------")
+            return
 
-    def i_tweet(self, link):
-        # email.send(f"i_tweet at {link}")
-        # return "OK!"
-        response = requests.get(link)
-        if response.status_code == 200:
-            with open("temp.jpg", "wb") as f:
-                f.write(response.content)
-            media = self.api.media_upload("temp.jpg")
-            # email.send(f"media id: {media.media_id}")
-            response = self.client.create_tweet(media_ids=[media.media_id])
-            # email.send(response)
-            os.remove("temp.jpg")
-            return response
+        if len(tweet_text) <= 280:
+            response = self.client.create_tweet(text=tweet_text)
+            print(f"Tweeted: {response.data['id']}")
         else:
-            email.send("Failed to download the image.")
-            return None
+            self.tweet_thread(tweet_text)
 
+    @_handle_api_errors
+    def tweet_thread(self, tweet_text: str):
+        chunks = Data.split_long_sentence(tweet_text)
+        if self.dry_run:
+            print("--- 🌵 DRY RUN - THREAD 🌵 ---")
+            for i, chunk in enumerate(chunks):
+                print(f"Part {i+1}/{len(chunks)}:\n{chunk}")
+            print("-------------------------------")
+            return
+        main_tweet_id = None
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                response = self.client.create_tweet(text=chunk)
+                main_tweet_id = response.data["id"]
+                print(f"Tweeted thread part 1: {main_tweet_id}")
+            else:
+                response = self.client.create_tweet(
+                    text=chunk, in_reply_to_tweet_id=main_tweet_id
+                )
+                main_tweet_id = response.data["id"]
+                print(f"Tweeted thread part {i+1}: {main_tweet_id}")
+
+    @_handle_api_errors
+    def i_tweet(self, link: str, status: str = ""):
+        if self.dry_run:
+            print("--- 🌵 DRY RUN - IMAGE TWEET 🌵 ---")
+            print(f"Status: {status}")
+            print(f"Image URL: {link}")
+            print("-----------------------------------")
+            return
+        response = requests.get(link)
+        response.raise_for_status()
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=True) as temp_file:
+            temp_file.write(response.content)
+            media = self.api.media_upload(filename=temp_file.name)
+            self.client.create_tweet(text=status, media_ids=[media.media_id])
+            print(f"Tweeted image: {link}")
+
+    @_handle_api_errors
     def v_tweet(self, status, video_path):
         # TODO: ADD Video tweeting
-        email.send("not implemented")
-        pass
+        error_handler.handle_error(0, f"An unexpected error occurred in v_tweet method")

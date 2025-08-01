@@ -1,6 +1,8 @@
 import requests
 import datetime
-import Email as email
+from Helpers import Email
+
+error_handler = Email.ErrorHandler()
 
 
 def get_islamic_date():
@@ -18,5 +20,5 @@ def get_islamic_date():
         return islamic_date
 
     except requests.RequestException as e:
-        email.send(f"Error fetching Islamic date: {e}")
+        error_handler.handle_error(f"Error fetching Islamic date: {e}")
         return None

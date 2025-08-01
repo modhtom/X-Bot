@@ -1,5 +1,7 @@
 import requests
-import Email as email
+from Helpers import Email
+
+error_handler = Email.ErrorHandler()
 
 
 def get_total_verses(surah_number):
@@ -30,7 +32,7 @@ def get_surah_text_range(surah_number, start_verse, end_verse, edition):
         if verse_text:
             text_combined += verse_text
         else:
-            email.send(f"Error getting text for verse {verse_num}")
+            error_handler.handle_error(f"Error getting text for verse {verse_num}")
 
     return text_combined
 
@@ -42,10 +44,9 @@ def QuranText(surah_number, start_verse, end_verse, edition="quran-simple"):
         output_file = f"Quran_Videos/Data/text/Surah_{surah_number}_Text_from_{start_verse}_to_{end_verse}.txt"
         with open(output_file, "w", encoding="utf-8") as file:
             file.write(text_combined)
-        # email.send(f"Combined text saved as '{output_file}'")
         return output_file
     else:
-        email.send("Failed to get text.")
+        error_handler.handle_error("Failed to get text.")
         return None
 
 
@@ -61,8 +62,8 @@ def fetch_surah_with_translation(surah_number):
         if response.status_code == 200:
             return response.json().get("data", [])
         else:
-            email.send(f"Error fetching data: {response.status_code}")
+            error_handler.handle_error(f"Error fetching data: {response.status_code}")
             return None
     except Exception as e:
-        email.send(f"Error: {e}")
+        error_handler.handle_error(f"Error: {e}")
         return None

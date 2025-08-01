@@ -2,3 +2,5 @@ Flask
 tweepy
 pytz
 BeautifulSoup4
+python-dotenv
+schedule

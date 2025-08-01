@@ -1,49 +1,49 @@
-from email.message import EmailMessage
-import ssl
+import os
 import smtplib
+import ssl
+import traceback
+from email.message import EmailMessage
 
 
-# TODO: enter email address and password
-def send(str):
-    email_sender = ""
-    email_password = ""
+class ErrorHandler:
+    def __init__(self):
+        self.email_sender = os.getenv("EMAIL_SENDER")
+        self.email_password = os.getenv("EMAIL_PASSWORD")
+        self.email_receiver = os.getenv("EMAIL_RECEIVER")
 
-    email_receiver = ""
-
-    subject = ""
-
-    body = f"{str}"
-
-    em = EmailMessage()
-    em["From"] = email_sender
-    em["TO"] = email_receiver
-    em["subject"] = subject
-    em.set_content(body)
-
-    context = ssl.create_default_context()
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as smtp:
-        smtp.login(email_sender, email_password)
-        smtp.sendmail(email_sender, email_receiver, em.as_string())
-
-
-def send_file(log_file_name, log_email_subject):
-    with open(log_file_name, "r") as log_file:
-        log_contents = log_file.read()
-
-        # Create an email message
-        email_sender = ""
-        email_password = ""
-        email_receiver = ""
+    def _send_email(self, subject, body):
+        if not all([self.email_sender, self.email_password, self.email_receiver]):
+            print("ERROR: Email credentials not set in environment. Cannot send email.")
+            return
 
         em = EmailMessage()
-        em["From"] = email_sender
-        em["To"] = email_receiver
-        em["Subject"] = log_email_subject
-        em.set_content(log_contents)
+        em["From"] = self.email_sender
+        em["To"] = self.email_receiver
+        em["Subject"] = subject
+        em.set_content(body)
 
-        # Send the email
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as smtp:
-            smtp.login(email_sender, email_password)
-            smtp.send_message(em)
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as smtp:
+                smtp.login(self.email_sender, self.email_password)
+                smtp.send_message(em)
+                print(f"Email notification '{subject}' sent successfully.")
+        except Exception as e:
+            print(f"FATAL: Could not send email. Error: {e}")
+
+    def handle_error(
+        self, e: Exception, context_message: str = "An unspecified error occurred"
+    ):
+        error_report = (
+            f"An error occurred in your Twitter Bot.\n"
+            f"Context: {context_message}\n\n"
+            f"Error Type: {type(e).__name__}\n"
+            f"Error Message: {str(e)}\n\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+
+        print("--- ERROR REPORT ---")
+        print(error_report)
+        print("--------------------")
+
+        self._send_email(f"Twitter Bot Error: {type(e).__name__}", error_report)

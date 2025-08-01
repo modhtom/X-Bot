@@ -1,74 +1,69 @@
-import Email as email
+from Helpers import Email
 from bs4 import BeautifulSoup
 import requests
 from typing import List, Tuple, Optional
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
+
+error_handler = Email.ErrorHandler()
+
+
+def clean_content(content: str) -> str:
+    return re.sub(r"\s+", " ", content).strip()
 
 
 def scrape_articles(url: str) -> List[Tuple[str, str]]:
+    qs = parse_qs(urlparse(url).query)
+    page = int(qs.get("pageno", ["1"])[0])
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
-        articles = soup.find_all("li")
-        article_data = []
+        resp = requests.get(url)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.content, "html.parser")
 
-        for article in articles:
-            h2_tag = article.find("h2")
-            if h2_tag:
-                title_tag = h2_tag.find("a")
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    article_url = urljoin(url, title_tag["href"])
-                    article_data.append((title, article_url))
+        items = soup.select("section > div:nth-of-type(1) > ul:nth-of-type(1) > li")
+        results = []
+        for li in items:
+            a = li.find("a")
+            if a and (href := a.get("href")):
+                title = a.get_text(strip=True)
+                full_url = urljoin(url, href)
+                results.append((title, full_url))
+        return results
 
-        return article_data
-
-    except requests.RequestException as e:
-        email.send(f"Error fetching articles from {url}: {e}")
+    except Exception as e:
+        error_handler.handle_error(f"[scrape_articles] page={page} failed: {e}")
         return []
 
 
 def get_fatwa_content(fatwa_url: str) -> Optional[Tuple[str, str]]:
     try:
-        response = requests.get(fatwa_url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
+        resp = requests.get(fatwa_url)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.content, "html.parser")
 
-        # Find (Question) section
-        question_text = ""
-        div_main = soup.find("div", class_="mainitem quest-fatwa")
-        if div_main:
-            title_element = div_main.find("h3", class_="mainitemtitle2")
-            title = (
-                title_element.get_text(strip=True)
-                if title_element
-                else "No title found"
-            )
-            question_element = div_main.find("div", itemprop="text")
-            question_text = (
-                question_element.get_text(strip=True).replace("\n", " ")
-                if question_element
-                else "No question text found"
-            )
-        # Find (Answer) section
-        answer_div = soup.find(
-            "div", class_="mainitem quest-fatwa", itemprop="acceptedAnswer"
+        question_paras = soup.select(
+            "section > div:nth-of-type(1) > div > div:nth-of-type(2) > div:nth-of-type(3) > p"
         )
-        answer_text = ""
-        if answer_div:
-            answer_content = answer_div.find("div", itemprop="text")
-            if answer_content:
-                answer_text = answer_content.get_text(strip=True)
+        question = next(
+            (p.get_text(strip=True) for p in question_paras if p.get_text(strip=True)),
+            "",
+        )
 
-        return clean_content(question_text), clean_content(answer_text)
+        answer_div = soup.select_one(
+            "section > div:nth-of-type(1) > div > div:nth-of-type(3) > div"
+        )
+        if not answer_div:
+            answer = ""
+        else:
+            paras = [
+                clean_content(p.get_text())
+                for p in answer_div.find_all("p")
+                if p.get_text(strip=True)
+            ]
+            answer = "\n\n".join(paras)
 
-    except requests.RequestException as e:
-        email.send(f"Error fetching fatwa content from {fatwa_url}: {e}")
+        return clean_content(question), clean_content(answer)
+
+    except Exception as e:
+        error_handler.handle_error(f"[get_fatwa_content] failed on {fatwa_url}: {e}")
         return None
-
-
-def clean_content(content: str) -> str:
-    cleaned = re.sub(r"\s+", " ", content)
-    return cleaned.strip()
