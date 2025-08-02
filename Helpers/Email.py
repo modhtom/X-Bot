@@ -3,6 +3,7 @@ import smtplib
 import ssl
 import traceback
 from email.message import EmailMessage
+from datetime import datetime
 
 
 class ErrorHandler:
@@ -30,6 +31,34 @@ class ErrorHandler:
                 print(f"Email notification '{subject}' sent successfully.")
         except Exception as e:
             print(f"FATAL: Could not send email. Error: {e}")
+
+    def email_scheduled_jobs(scheduler, handler):
+        report_lines = ["**Scheduled Jobs Report**\n"]
+
+        for job in scheduler.get_jobs():
+            try:
+                target = None
+                if job.args:
+                    target = job.args[0]
+                if target:
+                    func_name = f"{target.__module__}.{target.__name__}"
+                else:
+                    func_name = job.func_ref
+
+                report_lines.append(
+                    f"   Job ID: {job.id}\n"
+                    f"   Name: {func_name}\n"
+                    f"   Next Run: {job.next_run_time}\n"
+                    f"   Trigger: {job.trigger}\n"
+                )
+            except Exception:
+                report_lines.append(f"Failed to inspect job ID: {job.id}\n")
+
+        full_report = "\n".join(report_lines)
+        handler._send_email(
+            subject=f"Scheduled Jobs Report @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            body=full_report,
+        )
 
     def handle_error(
         self, e: Exception, context_message: str = "An unspecified error occurred"
