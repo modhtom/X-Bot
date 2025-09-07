@@ -27,30 +27,40 @@ def _handle_api_errors(func):
                     e, f"A Twitter API error occurred in {func.__name__}"
                 )
         except Exception as e:
-            error_handler.handle_error(
-                e, f"An unexpected error occurred in {func.__name__}"
-            )
+            print(e)   
+            #error_handler.handle_error(
+            #   e, f"An unexpected error occurred in {func.__name__}"
+            #)
 
     return wrapper
 
 
 class TwitterBot:
     def __init__(self):
-        consumer_key = os.getenv("CONSUMER_KEY")
-        consumer_secret = os.getenv("CONSUMER_SECRET")
-        access_token = os.getenv("ACCESS_TOKEN")
-        access_secret = os.getenv("ACCESS_SECRET")
-        if not all([consumer_key, consumer_secret, access_token, access_secret]):
-            raise ValueError(
-                "Twitter API credentials are not fully configured in environment variables."
-            )
+        def _load_secret(var_name: str) -> str:
+            file_path = f"/etc/secrets/{var_name}"
+            if os.path.isfile(file_path):
+                return open(file_path, "r").read().strip()
+            try:
+                return os.environ[var_name]
+            except KeyError:
+                raise ValueError(f"Missing credential: {var_name}")
+
+        consumer_key = _load_secret("CONSUMER_KEY")
+        consumer_secret = _load_secret("CONSUMER_SECRET")
+        access_token = _load_secret("ACCESS_TOKEN")
+        access_secret = _load_secret("ACCESS_SECRET")
+
         self.client = tweepy.Client(
-            consumer_key, consumer_secret, access_token, access_secret
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            access_token=access_token,
+            access_token_secret=access_secret,
         )
-        auth = tweepy.OAuth1UserHandler(
-            consumer_key, consumer_secret, access_token, access_secret
-        )
-        self.api = tweepy.API(auth)
+
+        self.auth = tweepy.OAuth1UserHandler(consumer_key, consumer_secret)
+        self.auth.set_access_token(access_token, access_secret)
+        self.api = tweepy.API(self.auth)
         self.dry_run = os.getenv("DRY_RUN", "False").lower() in ("true", "1")
 
         if self.dry_run:
